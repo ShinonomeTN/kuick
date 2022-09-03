@@ -5,7 +5,7 @@ package com.shinonometn.kuick.base
 /**
  * Represent logical error in business flows
  */
-open class BusinessException(val error: String = "business_error", message: String) : Exception(message)
+open class BusinessException(val error: String = "business_error", message: String, cause : Throwable? = null) : Exception(message, cause)
 
 inline fun businessError(message: String): Nothing = throw BusinessException(message = message)
 
