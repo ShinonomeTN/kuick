@@ -15,7 +15,57 @@
     <packaging>pom</packaging>
 
     <name>kuick</name>
-    <description>A simple framework that build ktor apps using spring</description>
+    <description>A scaffold for building ktor apps</description>
+
+    <profiles>
+        <profile>
+            <id>shinonometn</id>
+            <distributionManagement>
+                <repository>
+                    <id>shinonometn-repo-release</id>
+                    <url>https://nexus.shinonometn.com/repository/maven-releases/</url>
+                </repository>
+                <snapshotRepository>
+                    <id>shinonometn-repo-snapshot</id>
+                    <url>https://nexus.shinonometn.com/repository/maven-snapshots/</url>
+                </snapshotRepository>
+            </distributionManagement>
+            <build>
+                <plugins>
+                    <!--  Skip the default deploy plugin  -->
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-deploy-plugin</artifactId>
+                        <version>3.0.0-M1</version>
+                        <configuration>
+                            <skip>true</skip>
+                        </configuration>
+                    </plugin>
+                    <!-- References: https://www.baeldung.com/maven-deploy-nexus  -->
+                    <plugin>
+                        <groupId>org.sonatype.plugins</groupId>
+                        <artifactId>nexus-staging-maven-plugin</artifactId>
+                        <version>1.6.8</version>
+                        <executions>
+                            <execution>
+                                <id>default-deploy</id>
+                                <phase>deploy</phase>
+                                <goals>
+                                    <goal>deploy</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                        <configuration>
+                            <serverId>shinonometn-public</serverId>
+                            <nexusUrl>https://nexus.shinonometn.com/</nexusUrl>
+                            <!-- See: https://github.com/sonatype/nexus-maven-plugins/blob/master/staging/maven-plugin/WORKFLOWS.md -->
+                            <skipStaging>true</skipStaging>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
@@ -25,6 +75,7 @@
         <maven.compiler.source>8</maven.compiler.source>
         <maven.compiler.target>8</maven.compiler.target>
         <koemans.version>1.2</koemans.version>
+        <ktor.version>1.6.8</ktor.version>
     </properties>
 
     <repositories>
@@ -96,5 +147,43 @@
                 </plugin>
             </plugins>
         </pluginManagement>
+
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>2.22.2</version>
+            </plugin>
+
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>3.8.1</version>
+            </plugin>
+
+            <!-- See: https://stackoverflow.com/questions/5726291/updating-version-numbers-of-modules-in-a-multi-module-maven-project -->
+            <!-- mvn versions:set -DnewVersion=2.50.1-SNAPSHOT -->
+            <!-- mvn versions:revert -->
+            <!-- mvn versions:commit -->
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>versions-maven-plugin</artifactId>
+                <version>2.9.0</version>
+            </plugin>
+
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-source-plugin</artifactId>
+                <version>3.0.1</version>
+                <executions>
+                    <execution>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>jar</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
     </build>
 </project>
