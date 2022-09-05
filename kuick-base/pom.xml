@@ -24,9 +24,27 @@
         </dependency>
 
         <dependency>
+            <groupId>com.shinonometn</groupId>
+            <artifactId>koemans-coroutine</artifactId>
+            <version>${koemans.version}</version>
+        </dependency>
+
+        <dependency>
             <groupId>io.ktor</groupId>
             <artifactId>ktor-server-netty</artifactId>
             <version>${ktor.version}</version>
+        </dependency>
+
+        <dependency>
+            <groupId>io.ktor</groupId>
+            <artifactId>ktor-jackson</artifactId>
+            <version>${ktor.version}</version>
+        </dependency>
+
+        <dependency>
+            <groupId>com.fasterxml.jackson.datatype</groupId>
+            <artifactId>jackson-datatype-jsr310</artifactId>
+            <version>2.13.1</version>
         </dependency>
 
         <dependency>
