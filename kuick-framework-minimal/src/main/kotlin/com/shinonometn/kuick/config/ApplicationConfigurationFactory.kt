@@ -9,42 +9,73 @@ import org.slf4j.LoggerFactory
 import java.io.File
 import java.io.InputStreamReader
 import java.net.URI
+import java.util.*
 
-/** An more advance hocon configuration builder for ktor */
-class ApplicationConfigurationFactory(
-    private val args: Array<String> = emptyArray(),
+/**
+ * A more advance hocon configuration builder for ktor
+ * config will be cached after build for later use.
+ */
+class ApplicationConfigurationFactory private constructor(
+    args: Array<String> = emptyArray(),
     configurator: Configuration.() -> Unit = Configuration.DefaultConfig
 ) {
     private val config = Configuration().apply(configurator)
     private val logger = LoggerFactory.getLogger("ApplicationConfigurationFactory")
 
-    val context = Context(args, logger)
+    val context by lazy { Context(args, logger) }
 
-    /** build the config */
-    fun build(): Config {
-        val defaultSettings = (config.defaultProviders.filterNotNull() + config.configurations)
-            .map { context.it() }
+    private val cachedConfig by lazy(this::buildConfig)
 
-        context.log.info("Use {} default setting configs.", defaultSettings.size)
+    private fun buildConfig(): Config {
+        val configList = LinkedList<Config>()
+
+        val defaultSettings = (config.defaultProviders.filterNotNull() + config.configurations).map { context.it() }
+        context.log.info("Using {} default setting configs.", defaultSettings.size)
+        configList.addAll(defaultSettings)
+
+        val resolveConfig = config.resolveConfiguration ?: ResolveConfiguration().apply(ResolveConfiguration.DefaultConfig)
+        context.log.info("Registered {} resolver.", resolveConfig.chain.size)
 
         val configProviders = (context.argsMap["-config"]?.distinct() ?: emptyList())
-            .plus(System.getenv("application_profiles").split(","))
-            .mapNotNull { url -> (config.resolveConfiguration ?: ResolveConfiguration().apply(ResolveConfiguration.DefaultConfig)).resolve(url) }
+            .plus((System.getenv("application_profiles") ?: "").split(","))
+            .filter { it.isNotBlank() }
+            .mapNotNull { url -> resolveConfig.resolve(url) }
 
         context.log.info("{} config providers.", configProviders.size)
+        context.log.debug("Config providers : {}", configProviders.map { it.first })
 
         val configNames = config.configurationPolicy(context, configProviders.map { it.first })
-
         context.log.info("Enabled profile: {}", configNames)
 
-        val configList = configProviders.filter { configNames.contains(it.first) }.map { it.second() }
+        configList.addAll(configProviders.filter { configNames.contains(it.first) }.map { it.second() })
 
-        return (defaultSettings + configList).reversed().reduce { config, acc -> acc.withFallback(config) }.resolve()
+        configList.add(
+            ConfigFactory.parseMap(
+                context.argsMap.mapNotNull { (key, value) ->
+                    propertyPattern.matchEntire(key)?.let {
+                        it.groupValues.last() to (if (value.size <= 1) value.firstOrNull() else value)
+                    }
+                }.toMap()
+            )
+        )
+
+        context.log.info("Total {} config.", configList.size)
+        if (logger.isDebugEnabled) configList.forEachIndexed { index, item -> logger.debug("[{}] {}", index, item.toString()) }
+
+        return (defaultSettings + configList).reduceRight { config, acc -> acc.withFallback(config) }.resolve()
     }
 
+    /** build the config and cache. call it multiple times will return a same config. */
+    fun build(): Config = cachedConfig
+
     private fun ResolveConfiguration.resolve(location: String): Pair<String, () -> Config>? {
-        for (resolver in chain) return resolver.providerOrNull(URI.create(location)) ?: continue
-        logger.info("No resolver for config '{}'", location)
+        var result: Pair<String, () -> Config>?
+        for (resolver in chain) {
+            result = resolver.providerOrNull(URI.create(location))
+            if (result == null) continue
+            return result
+        }
+        logger.warn("No resolver for config '{}'", location)
         return null
     }
 
@@ -84,13 +115,10 @@ class ApplicationConfigurationFactory(
             }
 
             /* File resolver */
-
-            private const val fileProtocol = "file://"
-            private val fileProviderSupportedPattern = Regex("^(${fileProtocol}.+)|((?!://).+)")
-            private val fileProvider = Resolver {
-                when {
-                    it.matches(fileProviderSupportedPattern) -> ({ ConfigFactory.parseFile(File(it.removePrefix(fileProtocol))) })
-                    else -> null
+            private val fileProviderSupportedPattern = Regex("^(?:file://)?([^:]+)$")
+            private val fileProvider = Resolver { location ->
+                fileProviderSupportedPattern.matchEntire(location)?.let {
+                    { ConfigFactory.parseFile(File(it.groupValues.last())) }
                 }
             }
 
@@ -102,13 +130,13 @@ class ApplicationConfigurationFactory(
 
             /* classpath resolver */
 
-            private const val classPathProtocol = "classpath://"
-            private val classpathProviderSupportedPattern = Regex("^${classPathProtocol}.+")
-            private fun classpathProvider(classLoader: ClassLoader) = Resolver {
-                if (it.matches(classpathProviderSupportedPattern)) {
-                    classLoader.getResourceAsStream("/${it.removePrefix(classPathProtocol)}")
-                        ?.let { stream -> { ConfigFactory.parseReader(InputStreamReader(stream)) } }
-                } else null
+            private val classpathProviderSupportedPattern = Regex("^classpath://(.+)$")
+            private fun classpathProvider(classLoader: ClassLoader) = Resolver { location ->
+                classpathProviderSupportedPattern.matchEntire(location)?.let {
+                    classLoader.getResourceAsStream(it.groupValues.last())?.let { stream ->
+                        { ConfigFactory.parseReader(InputStreamReader(stream)) }
+                    }
+                }
             }
 
             /**
@@ -127,7 +155,7 @@ class ApplicationConfigurationFactory(
 
     class Configuration internal constructor() {
         internal val configurations = mutableListOf<Context.() -> Config>()
-        internal val defaultProviders = Array<(Context.() -> Config)?>(3) { null }
+        internal val defaultProviders = Array<(Context.() -> Config)?>(2) { null }
 
         private val systemProperties by lazy { ConfigFactory.systemProperties() }
 
@@ -141,21 +169,6 @@ class ApplicationConfigurationFactory(
             defaultProviders[1] = { systemProperties.withOnlyPath("ktor") }
         }
 
-        private val propertyPattern = Regex("^-P:(.+)")
-
-        /** use properties that starts with '-P:' in cmd line */
-        fun useCommandLineProperties() {
-            defaultProviders[2] = {
-                ConfigFactory.parseMap(
-                    argsMap.mapNotNull { (key, value) ->
-                        propertyPattern.matchEntire(key)?.let {
-                            it.groupValues.last() to (if (value.size <= 1) value.firstOrNull() else value)
-                        }
-                    }.toMap()
-                )
-            }
-        }
-
         fun configProvider(provider: Context.() -> Config) = configurations.add(provider)
 
         internal var resolveConfiguration: ResolveConfiguration? = null
@@ -167,7 +180,7 @@ class ApplicationConfigurationFactory(
 
         internal var configurationPolicy: Context.(List<String>) -> List<String> = { it }
 
-        /** setup the configuration policy. Policies will be chained together. */
+        /** Set up the configuration policy. Policies will be chained together. */
         fun configurationPolicies(vararg policies: Context.(List<String>) -> List<String>) {
             configurationPolicy = {
                 var result = it
@@ -191,7 +204,6 @@ class ApplicationConfigurationFactory(
             val DefaultConfig: Configuration.() -> Unit = {
                 useBundledApplicationConfiguration()
                 useKtorSystemProperties()
-                useCommandLineProperties()
                 useSystemPropertyWithPrefix("application")
 
                 configurationPolicies(ProfileSelectorPolicy)
@@ -211,8 +223,17 @@ class ApplicationConfigurationFactory(
 
                 profileList.filter {
                     when (val match = conditionalProfilePattern.matchEntire(it)) {
-                        null -> true
-                        else -> profiles.contains(match.groupValues.last())
+                        null -> {
+                            log.debug("config {} is not a conditional config, will be used.", it)
+                            true
+                        }
+
+                        else -> {
+                            val enable = profiles.contains(match.groupValues.last())
+                            if (!enable) log.debug("config {} will not be enable.", it)
+                            else log.info("config {} will be enabled.", it)
+                            enable
+                        }
                     }
                 }
             }
@@ -225,9 +246,15 @@ class ApplicationConfigurationFactory(
          * @return pair of config information, null if not support. first is name and second is value
          */
         fun providerOrNull(location: URI): Pair<String, () -> Config>? {
-            val name = location.resolveBaseName()
             val config = provider(location.toString()) ?: return null
-            return name to config
+            return location.resolveBaseName() to config
         }
+    }
+
+    companion object {
+        private val propertyPattern = Regex("^-P:(.+)")
+
+        fun create(args: Array<String> = emptyArray(), config: Configuration.() -> Unit = Configuration.DefaultConfig) =
+            ApplicationConfigurationFactory(args, config)
     }
 }
